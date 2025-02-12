@@ -32,24 +32,14 @@ crypt.METHOD_SHA512 A Modular Crypt Format method with 16 character salt and 86 
 Strongest method but we can consider others 
 """
 def secure_password(password):
-    return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512)) 
+    hash = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+    return hash 
 
-if __name__ == "__main__":
-    users_file = Path('users.json')
-    users = []
+def authenticate(password,hash):
     
-    if users_file.exists(): 
-        with open(users_file, 'r') as f:
-            users = json.load(f)
-    
-    if not users:
-        print("No users are registered with this client.")#delete users.json for demo
-    
-    choice = input("Do you want to register a new user (y/n)? ").strip().lower()
-    if choice != 'y':
-        print("Exiting SecureDrop.")
-        sys.exit(0)
-    
+    return crypt.crypt(password, hash) == hash
+
+def make_user(choice):
     full_name = input("Enter Full Name: ").strip()
     email = input("Enter Email Address: ").strip()
     password = getpass.getpass("Enter Password: ")
@@ -77,3 +67,54 @@ if __name__ == "__main__":
     
     print("User Registered.")
     print("Exiting SecureDrop.")
+
+def login(users_file):
+    password_sucess = 0
+    email_sucess = 0
+    email = input("Enter Email Address: ").strip()
+    password = getpass.getpass("Enter Password: ") 
+
+    with open(users_file, 'r') as f:
+        users = json.load(f)
+    
+    for user in users:
+            while True:   
+                if user['email'] != email:
+                    if not authenticate(password, user['password']) or password.len == 0:
+                        print("Email and Password Combination Invalid. ") #test if email is not in json? 
+
+                        email = input("Enter Email Address: ").strip()
+                        password = getpass.getpass("Enter Password: ") 
+                else:
+                    print("Welcome to SecureDrop.")
+                    break
+                    return True
+                    
+                            
+
+if __name__ == "__main__":
+    users_file = Path('users.json')
+    users = []
+    
+    if users_file.exists(): 
+        with open(users_file, 'r') as f:
+            users = json.load(f)
+    else:
+        print("No users are registered with this client.")#delete users.json for demo
+        choice = input("Do you want to register a new user (y/n)? ").strip().lower()
+        if choice == 'n':
+            print("Exiting SecureDrop.")
+            sys.exit(0)
+        elif choice == 'y':
+            make_user(choice)
+            print("Exiting SecureDrop.")
+            sys.exit(0)
+
+    
+    sucessful_login = login(users_file)
+    print("Type \"help\" For Commands.")
+    help = input().strip()
+    if help == 'help':
+          print(" \"add\" -> Add a new contact \n \"list\" -> List all online contacts \n \"send\" -> Transfer file to contact \n \"exit\" -> Exit SecureDrop")
+    
+    command = input().strip()
