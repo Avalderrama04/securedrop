@@ -88,12 +88,29 @@ def login(users_file):
                 else:
                     print("Welcome to SecureDrop.")
                     break
-                    return True
                     
                             
+def make_contact(contacts_file):
+    full_name = input("Enter Full Name: ").strip()
+    email = input("Enter Email Address: ").strip()
+    contacts = []
+    contacts_data = {
+        'full_name': full_name,
+        'email': email,
+        
+        #'public_key': public_key,
+        #'private_key': private_key  #encrypt private key in future milestones? 
+    }
+    
+    contacts.append(contacts_data)
+    with open(contacts_file, 'w') as f:
+        json.dump(contacts, f, indent=4)
+    print(f"Contact {full_name} added successfully.")
 
+    print("Contact Added. ")
 if __name__ == "__main__":
     users_file = Path('users.json')
+    contacts_file = Path('contacts.json')
     users = []
     
     if users_file.exists(): 
@@ -113,8 +130,15 @@ if __name__ == "__main__":
     
     sucessful_login = login(users_file)
     print("Type \"help\" For Commands.")
-    help = input().strip()
-    if help == 'help':
-          print(" \"add\" -> Add a new contact \n \"list\" -> List all online contacts \n \"send\" -> Transfer file to contact \n \"exit\" -> Exit SecureDrop")
+    while True:
+        command = input().strip()
+        if command == 'exit':
+            sys.exit(1)
+            break
+        elif command == 'add':
+            make_contact(contacts_file)
+        elif command == 'help':
+            print(" \"add\" -> Add a new contact \n \"list\" -> List all online contacts \n \"send\" -> Transfer file to contact \n \"exit\" -> Exit SecureDrop")
+                
+            
     
-    command = input().strip()
