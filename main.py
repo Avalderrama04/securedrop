@@ -66,28 +66,34 @@ def make_user(choice):
         json.dump(users, f, indent=4)
     
     print("User Registered.")
-    print("Exiting SecureDrop.")
 
 def login(users_file):
-    password_sucess = 0
-    email_sucess = 0
-    email = input("Enter Email Address: ").strip()
-    password = getpass.getpass("Enter Password: ") 
+    while True: 
+        email = input("Enter Email Address: ").strip()
+        password = getpass.getpass("Enter Password: ") 
+        if len(password) == 0:
+            print("empty password")
+            password = getpass.getpass("Enter Password: ") 
+                    
 
-    with open(users_file, 'r') as f:
-        users = json.load(f)
-    
-    for user in users:
-            while True:   
-                if user['email'] != email:
-                    if not authenticate(password, user['password']) or password.len == 0:
-                        print("Email and Password Combination Invalid. ") #test if email is not in json? 
-
-                        email = input("Enter Email Address: ").strip()
-                        password = getpass.getpass("Enter Password: ") 
-                else:
-                    print("Welcome to SecureDrop.")
-                    break
+        with open(users_file, 'r') as f:
+            users = json.load(f)
+        email_sucess = None
+        for user in users:
+            if user['email'] == email:
+                email_sucess = user
+                break
+        if not email_sucess:
+            print("Email not found, try again")
+            continue
+        if authenticate(password, email_sucess['password']):
+            print("Welcome to SecureDrop.")
+            return email_sucess
+        elif not authenticate(password, email_sucess['password']): 
+            print("Email and Password Combination Invalid. ") #test if email is not in json? 
+            email = input("Enter Email Address: ").strip()
+            password = getpass.getpass("Enter Password: ") 
+        
                     
                             
 def make_contact(contacts_file):
@@ -119,21 +125,22 @@ if __name__ == "__main__":
     else:
         print("No users are registered with this client.")#delete users.json for demo
         choice = input("Do you want to register a new user (y/n)? ").strip().lower()
-        if choice == 'n':
-            print("Exiting SecureDrop.")
-            sys.exit(0)
-        elif choice == 'y':
+        if choice == 'y':
             make_user(choice)
             print("Exiting SecureDrop.")
             sys.exit(0)
 
+        if choice == 'n':
+            print("Exiting SecureDrop.")
+            sys.exit(0)
+        
     
     sucessful_login = login(users_file)
     print("Type \"help\" For Commands.")
     while True:
         command = input().strip()
         if command == 'exit':
-            sys.exit(1)
+            sys.exit(0)
             break
         elif command == 'add':
             make_contact(contacts_file)
