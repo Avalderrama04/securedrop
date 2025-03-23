@@ -17,7 +17,7 @@ PORT = 5555
 BROADCAST_PORT = 5556
 BUFFER_SIZE = 1024
 BROADCAST_INTERVAL = 10  # seconds
-ONLINE_TIMEOUT = 30  # seconds - how long before considering a contact offline
+ONLINE_TIMEOUT = 30      # seconds - how long before considering a contact offline
 
 # Global variables
 running = True
@@ -32,8 +32,7 @@ def get_local_ip():
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except:
-        # Fallback if we can't determine IP
+    except Exception:
         return "127.0.0.1"
 
 def generate_key_pair():
@@ -59,17 +58,11 @@ def generate_key_pair():
 def encrypt_message(message, public_key_str):
     """Encrypt a message using the recipient's public key"""
     public_key = serialization.load_pem_public_key(public_key_str.encode())
-    
-    # Generate a random AES key
     aes_key = os.urandom(32)  # 256-bit key
-    
-    # Encrypt the message with AES
     iv = os.urandom(16)
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
     encryptor = cipher.encryptor()
     encrypted_message = encryptor.update(message.encode()) + encryptor.finalize()
-    
-    # Encrypt the AES key with RSA
     encrypted_key = public_key.encrypt(
         aes_key,
         padding.OAEP(
@@ -78,14 +71,11 @@ def encrypt_message(message, public_key_str):
             label=None
         )
     )
-    
-    # Combine everything
     result = {
         'encrypted_key': base64.b64encode(encrypted_key).decode(),
         'iv': base64.b64encode(iv).decode(),
         'encrypted_message': base64.b64encode(encrypted_message).decode()
     }
-    
     return json.dumps(result)
 
 def decrypt_message(encrypted_data, private_key_str):
@@ -94,14 +84,10 @@ def decrypt_message(encrypted_data, private_key_str):
         private_key_str.encode(),
         password=None
     )
-    
-    # Parse the encrypted data
     data = json.loads(encrypted_data)
     encrypted_key = base64.b64decode(data['encrypted_key'])
     iv = base64.b64decode(data['iv'])
     encrypted_message = base64.b64decode(data['encrypted_message'])
-    
-    # Decrypt the AES key with RSA
     aes_key = private_key.decrypt(
         encrypted_key,
         padding.OAEP(
@@ -110,20 +96,16 @@ def decrypt_message(encrypted_data, private_key_str):
             label=None
         )
     )
-    
-    # Decrypt the message with AES
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
     decryptor = cipher.decryptor()
     decrypted_message = decryptor.update(encrypted_message) + decryptor.finalize()
-    
     return decrypted_message.decode()
 
 def secure_password(password):
-    hash = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
-    return hash 
+    return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
 
-def authenticate(password, hash):
-    return crypt.crypt(password, hash) == hash
+def authenticate(password, stored_hash):
+    return crypt.crypt(password, stored_hash) == stored_hash
 
 def make_user(choice):
     full_name = input("Enter Full Name: ").strip()
@@ -136,7 +118,6 @@ def make_user(choice):
         sys.exit(1)
     
     print("Passwords Match.")
-
     private_key, public_key = generate_key_pair()
     
     user_data = {
@@ -157,37 +138,32 @@ def login(users_file):
     while True: 
         email = input("Enter Email Address: ").strip()
         password = getpass.getpass("Enter Password: ") 
-        if len(password) == 0:
+        if not password:
             print("Empty password")
-            password = getpass.getpass("Enter Password: ") 
-                    
+            continue
         with open(users_file, 'r') as f:
-            users = json.load(f)
-            
-        email_success = None
-        for user in users:
+            users_data = json.load(f)
+        user_found = None
+        for user in users_data:
             if user['email'] == email:
-                email_success = user
+                user_found = user
                 break
-                
-        if not email_success:
+        if not user_found:
             print("Email not found, try again")
             continue
-            
-        if authenticate(password, email_success['password']):
+        if authenticate(password, user_found['password']):
             print("\n✓ Successfully authenticated!")
             print("Welcome to SecureDrop.")
-            return email_success
-        else: 
+            return user_found
+        else:
             print("Email and Password Combination Invalid.")
-            continue
-                            
+
 def make_contact(contacts_file):
     """Add a new contact to contacts.json"""
     full_name = input("Enter Full Name: ").strip()
     email = input("Enter Email Address: ").strip()
     
-    # Load existing contacts or create new contacts list
+    # Load existing contacts or create a new list
     contacts = []
     if contacts_file.exists():
         try:
@@ -196,13 +172,11 @@ def make_contact(contacts_file):
         except json.JSONDecodeError:
             contacts = []
     
-    # Check if contact already exists
     for contact in contacts:
         if contact['email'] == email:
             print(f"Contact with email {email} already exists.")
             return
     
-    # Add new contact with network properties
     contact_data = {
         'full_name': full_name,
         'email': email,
@@ -221,170 +195,197 @@ def make_contact(contacts_file):
 def start_broadcast_service():
     """Start the UDP broadcast service to announce presence on the network"""
     global current_user, local_ip, running
-    
     def broadcast_thread():
-        # Create broadcast socket
         broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        
-        # Set socket timeout to prevent blocking issues
+        broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass  # SO_REUSEPORT may not be available
         broadcast_socket.settimeout(1)
-        
         print("Network service started. Broadcasting presence...")
-        
         try:
             while running:
                 try:
-                    # Prepare message with user info
                     message = {
                         'type': 'announce',
                         'email': current_user['email'],
                         'timestamp': time.time(),
                         'ip': local_ip
                     }
-                    
-                    # Sign message with private key (simplified for now)
                     message_json = json.dumps(message)
-                    
-                    # Broadcast to local network
                     try:
                         broadcast_socket.sendto(message_json.encode(), ('<broadcast>', BROADCAST_PORT))
-                    except:
-                        # Fallback to subnet broadcast if direct broadcast fails
+                    except Exception:
                         parts = local_ip.split('.')
                         subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.255"
                         broadcast_socket.sendto(message_json.encode(), (subnet, BROADCAST_PORT))
-                        
+                    attempt_direct_announcements()
                     time.sleep(BROADCAST_INTERVAL)
                 except socket.error:
                     time.sleep(1)
                     continue
-                    
         except Exception as e:
             print(f"Broadcast error: {e}")
         finally:
             broadcast_socket.close()
-    
-    # Start broadcast in background thread
-    broadcast_thread = threading.Thread(target=broadcast_thread)
-    broadcast_thread.daemon = True
-    broadcast_thread.start()
+    t = threading.Thread(target=broadcast_thread, daemon=True)
+    t.start()
+
+def attempt_direct_announcements():
+    """Try to directly announce presence to known contacts"""
+    global contacts_file
+    if not contacts_file.exists():
+        return
+    try:
+        with open(contacts_file, 'r') as f:
+            contacts = json.load(f)
+        for contact in contacts:
+            if contact.get('ip_address'):
+                direct_announce_to_contact(contact)
+    except Exception:
+        pass
+
+def direct_announce_to_contact(contact):
+    """Send a direct announcement to a specific contact"""
+    global current_user, local_ip
+    if not contact.get('ip_address'):
+        return False
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
+        client.settimeout(3)
+        client.connect((contact['ip_address'], PORT))
+        message = {
+            'type': 'direct_announce',
+            'email': current_user['email'],
+            'timestamp': time.time(),
+            'ip': local_ip
+        }
+        client.send(json.dumps(message).encode())
+        client.close()
+        return True
+    except Exception:
+        return False
 
 def start_listener_service(contacts_file):
     """Listen for broadcasts from other users on the network"""
     global running
-    
     def listener_thread():
-        # Create listener socket
         listener_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
-        # Bind to broadcast port
+        try:
+            listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
         try:
             listener_socket.bind(('', BROADCAST_PORT))
-            # Set timeout to prevent blocking issues
-            listener_socket.settimeout(1)
-            
-            while running:
-                try:
-                    # Receive announcement
-                    data, addr = listener_socket.recvfrom(BUFFER_SIZE)
-                    message = json.loads(data.decode())
-                    
-                    # Skip our own messages
-                    if message.get('email') == current_user['email']:
-                        continue
-                    
-                    # Update contact if in our list
-                    update_contact_status(contacts_file, message)
-                    
-                except socket.timeout:
-                    continue
-                except json.JSONDecodeError:
-                    continue
-                except Exception as e:
-                    continue
-                    
         except Exception as e:
             print(f"Listener error: {e}")
-        finally:
-            listener_socket.close()
-    
-    # Start listener in background thread
-    listener_thread = threading.Thread(target=listener_thread)
-    listener_thread.daemon = True
-    listener_thread.start()
+            return
+        listener_socket.settimeout(1)
+        while running:
+            try:
+                data, addr = listener_socket.recvfrom(BUFFER_SIZE)
+                message = json.loads(data.decode())
+                if message.get('email') == current_user['email']:
+                    continue
+                update_contact_status(contacts_file, message)
+            except socket.timeout:
+                continue
+            except json.JSONDecodeError:
+                continue
+            except Exception:
+                continue
+        listener_socket.close()
+    t = threading.Thread(target=listener_thread, daemon=True)
+    t.start()
 
 def start_mutual_check_service(contacts_file):
     """Handle TCP connections for mutual contact verification"""
     global current_user, running
-    
     def server_thread():
-        # Create server socket
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
+        try:
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
         try:
             server_socket.bind(('', PORT))
-            server_socket.listen(5)
-            server_socket.settimeout(1)
-            
-            while running:
-                try:
-                    # Accept connection
-                    client, addr = server_socket.accept()
-                    
-                    # Handle in separate thread
-                    threading.Thread(target=handle_mutual_check, args=(client, contacts_file), daemon=True).start()
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    continue
         except Exception as e:
             print(f"Mutual check server error: {e}")
-        finally:
-            server_socket.close()
-    
-    # Start server in background thread
-    server_thread = threading.Thread(target=server_thread)
-    server_thread.daemon = True
-    server_thread.start()
+            return
+        server_socket.listen(5)
+        server_socket.settimeout(1)
+        while running:
+            try:
+                client, addr = server_socket.accept()
+                threading.Thread(target=handle_mutual_check, args=(client, contacts_file), daemon=True).start()
+            except socket.timeout:
+                continue
+            except Exception:
+                continue
+        server_socket.close()
+    t = threading.Thread(target=server_thread, daemon=True)
+    t.start()
 
 def handle_mutual_check(client_socket, contacts_file):
-    """Handle mutual contact verification request"""
-    global current_user
-    
+    """Handle mutual contact verification request and direct announcements"""
+    global current_user, local_ip
     try:
-        # Set timeout to prevent hanging
         client_socket.settimeout(5)
-        
-        # Receive request
         data = client_socket.recv(BUFFER_SIZE)
         message = json.loads(data.decode())
-        
         if message.get('type') == 'mutual_check':
             requester_email = message.get('email')
-            
-            # Check if we have this contact
             with open(contacts_file, 'r') as f:
                 contacts = json.load(f)
-            
-            # See if we have the requester in our contacts
             is_contact = False
-            for contact in contacts:
+            updated = False
+            for i, contact in enumerate(contacts):
                 if contact['email'] == requester_email:
                     is_contact = True
+                    contacts[i]['last_seen'] = time.time()
+                    contacts[i]['online'] = True
+                    if message.get('ip'):
+                        contacts[i]['ip_address'] = message.get('ip')
+                    updated = True
                     break
-            
-            # Send response
+            if updated:
+                with open(contacts_file, 'w') as f:
+                    json.dump(contacts, f, indent=4)
             response = {
                 'type': 'mutual_response',
                 'email': current_user['email'],
-                'is_contact': is_contact
+                'is_contact': is_contact,
+                'ip': local_ip
             }
-            
             client_socket.send(json.dumps(response).encode())
-    except Exception as e:
+        elif message.get('type') == 'direct_announce':
+            sender_email = message.get('email')
+            if contacts_file.exists():
+                with open(contacts_file, 'r') as f:
+                    contacts = json.load(f)
+                updated = False
+                for i, contact in enumerate(contacts):
+                    if contact['email'] == sender_email:
+                        contacts[i]['last_seen'] = message.get('timestamp', time.time())
+                        contacts[i]['online'] = True
+                        contacts[i]['ip_address'] = message.get('ip')
+                        updated = True
+                        if not contacts[i]['mutual']:
+                            verify_mutual_status(contacts[i], i, contacts)
+                        break
+                if updated:
+                    with open(contacts_file, 'w') as f:
+                        json.dump(contacts, f, indent=4)
+    except Exception:
         pass
     finally:
         client_socket.close()
@@ -393,112 +394,121 @@ def update_contact_status(contacts_file, message):
     """Update a contact's online status and IP address"""
     if not contacts_file.exists():
         return
-    
     try:
-        # Load contacts
         with open(contacts_file, 'r') as f:
             contacts = json.load(f)
-        
         updated = False
         for i, contact in enumerate(contacts):
             if contact['email'] == message.get('email'):
-                # Update contact info
                 contacts[i]['last_seen'] = message.get('timestamp')
                 contacts[i]['online'] = True
                 contacts[i]['ip_address'] = message.get('ip')
                 updated = True
-                
-                # Check for mutual status if not already verified
-                if not contacts[i]['mutual']:
+                if not contact.get('mutual'):
                     verify_mutual_status(contacts[i], i, contacts)
-                
                 break
-        
         if updated:
-            # Save updated contacts
             with open(contacts_file, 'w') as f:
                 json.dump(contacts, f, indent=4)
-    except Exception as e:
+    except Exception:
         pass
 
 def verify_mutual_status(contact, contact_index, contacts):
     """Check if a contact has also added us"""
     global current_user
-    
     if not contact.get('ip_address'):
-        return
-    
+        return False
     try:
-        # Create client socket
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except AttributeError:
+            pass
         client.settimeout(5)
-        
-        # Connect to contact
         client.connect((contact['ip_address'], PORT))
-        
-        # Send mutual check request
         request = {
             'type': 'mutual_check',
-            'email': current_user['email']
+            'email': current_user['email'],
+            'ip': local_ip
         }
-        
         client.send(json.dumps(request).encode())
-        
-        # Get response
         response = json.loads(client.recv(BUFFER_SIZE).decode())
-        
         if response.get('type') == 'mutual_response' and response.get('is_contact'):
-            # They have us in their contacts too
             contacts[contact_index]['mutual'] = True
-        
+            return True
         client.close()
-    except Exception as e:
+    except Exception:
         pass
+    return False
+
+def start_contact_monitor(contacts_file):
+    """Periodically check contacts' status"""
+    global running
+    def monitor_thread():
+        while running:
+            try:
+                if contacts_file.exists():
+                    with open(contacts_file, 'r') as f:
+                        contacts = json.load(f)
+                    current_time = time.time()
+                    updated = False
+                    for i, contact in enumerate(contacts):
+                        if contact.get('last_seen') and (current_time - contact['last_seen'] > ONLINE_TIMEOUT):
+                            contacts[i]['online'] = False
+                            updated = True
+                        if contact.get('online', False) and not contact.get('mutual', False):
+                            if verify_mutual_status(contact, i, contacts):
+                                updated = True
+                    if updated:
+                        with open(contacts_file, 'w') as f:
+                            json.dump(contacts, f, indent=4)
+            except Exception:
+                pass
+            time.sleep(10)
+    t = threading.Thread(target=monitor_thread, daemon=True)
+    t.start()
 
 def list_contacts(contacts_file):
-    """List all contacts that are online and mutual"""
+    """List all contacts with their status"""
     if not contacts_file.exists():
         print("No contacts found.")
         return
-    
     try:
-        # Load contacts
         with open(contacts_file, 'r') as f:
             contacts = json.load(f)
-        
         if not contacts:
             print("No contacts found.")
             return
-        
-        # Check which contacts are still online based on last_seen timestamp
         current_time = time.time()
-        online_mutual_contacts = []
-        
-        for contact in contacts:
-            # Check if last seen within timeout period
+        updated = False
+        print("\nAll Contacts:")
+        print("-------------")
+        print(f"{'Name':<20} {'Email':<30} {'Status':<10} {'Mutual':<8}")
+        print("-" * 70)
+        for i, contact in enumerate(contacts):
             if contact.get('last_seen') and (current_time - contact['last_seen'] < ONLINE_TIMEOUT):
-                contact['online'] = True
-                
-                # Only show contacts that are both online and mutual
-                if contact.get('mutual', False):
-                    online_mutual_contacts.append(contact)
+                if not contact.get('online', False):
+                    contact['online'] = True
+                    updated = True
             else:
-                contact['online'] = False
-        
-        # Save updated online status
-        with open(contacts_file, 'w') as f:
-            json.dump(contacts, f, indent=4)
-        
-        # Display online mutual contacts
-        if not online_mutual_contacts:
-            print("No online mutual contacts found.")
-            return
-        
-        print("\nOnline Contacts:")
-        print("---------------")
-        for i, contact in enumerate(online_mutual_contacts, 1):
-            print(f"{i}. {contact['full_name']} ({contact['email']})")
-        print()
+                if contact.get('online', False):
+                    contact['online'] = False
+                    updated = True
+            status = "Online" if contact.get('online', False) else "Offline"
+            mutual = "Yes" if contact.get('mutual', False) else "No"
+            print(f"{contact['full_name']:<20} {contact['email']:<30} {status:<10} {mutual:<8}")
+        online_mutual = [c for c in contacts if c.get('online', False) and c.get('mutual', False)]
+        if online_mutual:
+            print("\nOnline Mutual Contacts (available for file transfer):")
+            print("---------------------------------------------------")
+            for i, contact in enumerate(online_mutual, 1):
+                print(f"{i}. {contact['full_name']} ({contact['email']})")
+        else:
+            print("\nNo contacts are both online and mutual (required for file transfer).")
+        if updated:
+            with open(contacts_file, 'w') as f:
+                json.dump(contacts, f, indent=4)
     except Exception as e:
         print(f"Error listing contacts: {e}")
 
@@ -506,22 +516,42 @@ def print_help():
     """Display available commands"""
     print("\nAvailable Commands:")
     print("------------------")
-    print("  add   -> Add a new contact")
-    print("  list  -> List all online contacts")
-    print("  send  -> Transfer file to contact")
-    print("  help  -> Show these commands")
-    print("  exit  -> Exit SecureDrop")
-    print()
+    print("  add    -> Add a new contact")
+    print("  list   -> List all contacts and statuses")
+    print("  verify -> Force mutual verification for all contacts")
+    print("  send   -> Transfer file to contact (not yet implemented)")
+    print("  help   -> Show these commands")
+    print("  exit   -> Exit SecureDrop\n")
+
+def force_mutual_check(contacts_file):
+    """Force a mutual check for all contacts"""
+    if not contacts_file.exists():
+        print("No contacts found.")
+        return
+    try:
+        with open(contacts_file, 'r') as f:
+            contacts = json.load(f)
+        if not contacts:
+            print("No contacts found.")
+            return
+        print("Checking mutual status for all contacts...")
+        for i, contact in enumerate(contacts):
+            if verify_mutual_status(contact, i, contacts):
+                print(f"✓ Mutual verification successful for {contact['full_name']}")
+        with open(contacts_file, 'w') as f:
+            json.dump(contacts, f, indent=4)
+        print("Mutual verification completed.")
+    except Exception as e:
+        print(f"Error checking mutual status: {e}")
 
 if __name__ == "__main__":
     users_file = Path('users.json')
     contacts_file = Path('contacts.json')
     users = []
     
-    # Get local IP address
     local_ip = get_local_ip()
     
-    if users_file.exists(): 
+    if users_file.exists():
         with open(users_file, 'r') as f:
             users = json.load(f)
     else:
@@ -531,26 +561,23 @@ if __name__ == "__main__":
             make_user(choice)
             print("Exiting SecureDrop.")
             sys.exit(0)
-
-        if choice == 'n':
+        else:
             print("Exiting SecureDrop.")
             sys.exit(0)
     
-    # Login user
     current_user = login(users_file)
     
-    # Initialize or create contacts file if it doesn't exist
     if not contacts_file.exists():
         with open(contacts_file, 'w') as f:
             json.dump([], f, indent=4)
     
-    # Start network services
     print("Starting network services...")
     start_broadcast_service()
     start_listener_service(contacts_file)
     start_mutual_check_service(contacts_file)
+    start_contact_monitor(contacts_file)
     
-    print("Type \"help\" For Commands.")
+    print("Type \"help\" for commands.")
     
     try:
         while True:
@@ -563,6 +590,8 @@ if __name__ == "__main__":
                 make_contact(contacts_file)
             elif command == 'list':
                 list_contacts(contacts_file)
+            elif command == 'verify':
+                force_mutual_check(contacts_file)
             elif command == 'help':
                 print_help()
             elif command == 'send':

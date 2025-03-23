@@ -1,31 +1,10 @@
 [
     {
-        "full_name": "Ayoub Darkaoui",
-        "email": "adarkaoui@email.com",
-        "mutual": true,
-        "online": false,
-        "last_seen": null
-    },
-    {
-        "full_name": "Sanad Darkaoui",
-        "email": "sDarkaoui@mail.com",
-        "mutual": false,
-        "online": false,
-        "last_seen": null
-    },
-    {
-        "full_name": "Houda dooda",
-        "email": "hdooda@yahoo.ma",
-        "mutual": true,
-        "online": false,
-        "last_seen": null
-    },
-    {
         "full_name": "John Smith",
         "email": "jsmith@gmail.com",
-        "mutual": false,
-        "online": false,
-        "ip_address": null,
-        "last_seen": null
+        "mutual": true,
+        "online": true,
+        "ip_address": "10.8.0.63",
+        "last_seen": 1742698958.726573
     }
 ]
