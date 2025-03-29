@@ -350,7 +350,7 @@ def handle_mutual_check(client_socket, contacts_file):
         message = json.loads(data.decode())
         
         if message.get('type') == 'file_transfer_request':
-            print(f"\nIncoming file transfer request detected from {message.get('from_email')}")
+            print(f"\nIncoming file transfer request detected from {message['from_email']}")
             handle_file_transfer_request(client_socket, contacts_file)
             return
         elif message.get('type') == 'mutual_check':
