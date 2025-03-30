@@ -9,11 +9,19 @@ import crypt
 import os
 import base64
 import hashlib
-import struct
 import random
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+sequence_number = random.randint(100000, 999999)
+shared_secret = "secure_drop_secret" 
+
+def derive_key(secret):
+    return hashlib.sha256(secret.encode()).digest()
+
+def compute_sha256(data):
+    return hashlib.sha256(data).hexdigest()
 
 # Network configuration
 PORT = 5555
@@ -21,9 +29,6 @@ BROADCAST_PORT = 5556
 BUFFER_SIZE = 1024
 BROADCAST_INTERVAL = 10  # seconds
 ONLINE_TIMEOUT = 30      # seconds - how long before considering a contact offline
-
-FILE_TRANSFER_DIR = "received_files"  # Directory to store received files
-SEQUENCE_NUM = random.randint(0, 2**32 - 1)  # Random initial sequence number
 
 # Global variables
 running = True
@@ -348,12 +353,7 @@ def handle_mutual_check(client_socket, contacts_file):
         client_socket.settimeout(30)
         data = client_socket.recv(BUFFER_SIZE)
         message = json.loads(data.decode())
-        
-        if message.get('type') == 'file_transfer_request':
-            print(f"\nIncoming file transfer request detected from {message['from_email']}")
-            handle_file_transfer_request(client_socket, contacts_file)
-            return
-        elif message.get('type') == 'mutual_check':
+        if message.get('type') == 'mutual_check':
             requester_email = message.get('email')
             with open(contacts_file, 'r') as f:
                 contacts = json.load(f)
@@ -378,6 +378,52 @@ def handle_mutual_check(client_socket, contacts_file):
                 'ip': local_ip
             }
             client_socket.send(json.dumps(response).encode())
+        elif message.get('type') == 'file_transfer_request':
+            sender = message.get('sender')
+            filename = message.get('filename')
+            filesize = message.get('filesize')
+            iv = base64.b64decode(message['iv'])
+            checksum = message.get('checksum')
+            incoming_seq = message.get('sequence_number')
+
+            print(f"\nContact '{sender}' is sending a file. Accept (y/n)?")
+            choice = input(">>> ").strip().lower()
+            if choice != 'y':
+                client_socket.send(b'deny')
+                return
+            client_socket.send(b'accept')
+
+            # Receive encrypted data
+            received_data = b''
+            while len(received_data) < int(filesize):
+                chunk = client_socket.recv(min(BUFFER_SIZE, int(filesize) - len(received_data)))
+                if not chunk:
+                    break
+                received_data += chunk
+
+            # Decrypt
+            aes_key = derive_key(shared_secret)
+            cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
+            decryptor = cipher.decryptor()
+            decrypted_data = decryptor.update(received_data) + decryptor.finalize()
+
+            # Integrity Check
+            if compute_sha256(decrypted_data) != checksum:
+                print("File integrity check failed.")
+                return
+
+            # Save to desired directory
+            print(f"Enter directory to save '{filename}':")
+            directory = input(">>> ").strip()
+            if not os.path.isdir(directory):
+                print("Invalid directory.")
+                return
+
+            save_path = os.path.join(directory, filename)
+            with open(save_path, 'wb') as f:
+                f.write(decrypted_data)
+
+            print(f"File saved to {save_path}")
         elif message.get('type') == 'direct_announce':
             sender_email = message.get('email')
             if contacts_file.exists():
@@ -554,233 +600,60 @@ def force_mutual_check(contacts_file):
         print("Mutual verification completed.")
     except Exception as e:
         print(f"Error checking mutual status: {e}")
-        
-def send_file(contact_email, file_path):
-    """Send a file to a contact"""
-    global current_user, contacts_file, SEQUENCE_NUM
-    
-    # Check if contact exists and is mutual
-    if not contacts_file.exists():
-        print("No contacts found.")
+
+def send_file_to_contact(recipient_email, file_path, current_user, contacts_file):
+    global sequence_number
+    if not os.path.exists(file_path):
+        print("File does not exist.")
         return
-    
+
     with open(contacts_file, 'r') as f:
         contacts = json.load(f)
-    
-    contact = None
-    for c in contacts:
-        if c['email'] == contact_email:
-            contact = c
-            break
-    
-    if not contact:
-        print(f"Contact with email {contact_email} not found.")
-        return
-    
-    if not contact.get('mutual', False):
-        print(f"Contact {contact['full_name']} is not a mutual contact.")
-        return
-    
-    if not contact.get('online', False):
-        print(f"Contact {contact['full_name']} is offline.")
-        return
-    
-    if not contact.get('ip_address'):
-        print(f"No IP address available for {contact['full_name']}.")
-        return
-    
-    # Verify file exists
-    file_path = Path(file_path)
-    if not file_path.exists():
-        print(f"File {file_path} does not exist.")
-        return
-    
-    # Get file info
-    file_name = file_path.name
-    file_size = file_path.stat().st_size
-    
-    # Connect to contact and request transfer
-    try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        client.settimeout(30)
-        
-        print(f"Attempting to connect to {contact['ip_address']}:{PORT}...")
-        try:
-            client.connect((contact['ip_address'], PORT))
-            print("Connection established.")
-        except socket.timeout:
-            print("Connection timed out. Possible issues:")
-            print("- Contact is offline")
-            print("- Firewall blocking port", PORT)
-            print("- Network connectivity issues")
-            client.close()
-            return
-        except ConnectionRefusedError:
-            print("Connection refused. Is the contact running SecureDrop?")
-            client.close()
-            return
-        
-        # Send transfer request
-        request = {
-            'type': 'file_transfer_request',
-            'from_email': current_user['email'],
-            'file_name': file_name,
-            'file_size': file_size,
-            'sequence_num': SEQUENCE_NUM
-        }
-        client.send(json.dumps(request).encode())
-        
-        # Get response
-        response_data = client.recv(BUFFER_SIZE)
-        if not response_data:
-            print("No response from contact.")
-            client.close()
-            return
-            
-        response = json.loads(response_data.decode())
-        if response.get('type') != 'file_transfer_response' or not response.get('accepted', False):
-            print(f"Contact declined the file transfer.")
-            client.close()
-            return
-        
-        print("Contact has accepted the transfer request. Starting file transfer...")
-        
-        # Increment sequence number
-        SEQUENCE_NUM += 1
-        
-        # Send file in chunks with encryption
-        with open(file_path, 'rb') as f:
-            file_hash = hashlib.sha256()
-            bytes_sent = 0
-            chunk_size = 4096  # 4KB chunks
-            
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                
-                # Encrypt the chunk
-                encrypted_chunk = encrypt_message(chunk.hex(), contact['public_key'])
-                client.send(encrypted_chunk.encode())
-                
-                # Update hash and progress
-                file_hash.update(chunk)
-                bytes_sent += len(chunk)
-                
-                # Print progress
-                percent = (bytes_sent / file_size) * 100
-                print(f"Progress: {percent:.1f}%", end='\r')
-            
-            # Send hash verification
-            final_message = {
-                'type': 'file_transfer_complete',
-                'file_hash': file_hash.hexdigest(),
-                'sequence_num': SEQUENCE_NUM
-            }
-            client.send(json.dumps(final_message).encode())
-        
-        print("\nFile has been successfully transferred.")
-        client.close()
-        
-    except Exception as e:
-        print(f"Error during file transfer: {e}")
-        if 'client' in locals():
-            client.close()
 
-def handle_file_transfer_request(client_socket, contacts_file):
-    """Handle incoming file transfer requests"""
-    global current_user, SEQUENCE_NUM
-    
+    contact = next((c for c in contacts if c['email'] == recipient_email), None)
+    if not contact or not contact.get('online') or not contact.get('mutual') or not contact.get('ip_address'):
+        print("Contact must be mutual, online, and have a valid IP.")
+        return
+
+    with open(file_path, 'rb') as f:
+        file_data = f.read()
+
+    checksum = compute_sha256(file_data)
+    aes_key = derive_key(shared_secret)
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
+    encryptor = cipher.encryptor()
+    encrypted_data = encryptor.update(file_data) + encryptor.finalize()
+
     try:
-        data = client_socket.recv(BUFFER_SIZE)
-        request = json.loads(data.decode())
-        
-        if request.get('type') != 'file_transfer_request':
-            return
-            
-        # Verify sequence number is greater than last seen
-        if request.get('sequence_num', 0) <= SEQUENCE_NUM:
-            response = {
-                'type': 'file_transfer_response',
-                'accepted': False,
-                'reason': 'Invalid sequence number (possible replay attack)'
-            }
-            client_socket.send(json.dumps(response).encode())
-            return
-        
-        SEQUENCE_NUM = request['sequence_num']
-        
-        # Show transfer request to user
-        print(f"\nContact '{request['from_email']}' is sending a file.")
-        print(f"File: {request['file_name']} ({request['file_size']} bytes)")
-        choice = input("Accept (y/n)? ").strip().lower()
-        
-        if choice != 'y':
-            response = {
-                'type': 'file_transfer_response',
-                'accepted': False
-            }
-            client_socket.send(json.dumps(response).encode())
-            return
-        
-        # Create directory for received files if it doesn't exist
-        if not Path(FILE_TRANSFER_DIR).exists():
-            Path(FILE_TRANSFER_DIR).mkdir()
-            
-        file_path = Path(FILE_TRANSFER_DIR) / request['file_name']
-        
-        response = {
-            'type': 'file_transfer_response',
-            'accepted': True
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect((contact['ip_address'], PORT))
+
+        metadata = {
+            'type': 'file_transfer_request',
+            'filename': os.path.basename(file_path),
+            'filesize': len(encrypted_data),
+            'iv': base64.b64encode(iv).decode(),
+            'sender': current_user['email'],
+            'checksum': checksum,
+            'sequence_number': sequence_number
         }
-        client_socket.send(json.dumps(response).encode())
-        
-        # Receive file
-        file_hash = hashlib.sha256()
-        bytes_received = 0
-        file_size = request['file_size']
-        
-        with open(file_path, 'wb') as f:
-            while bytes_received < file_size:
-                data = client_socket.recv(BUFFER_SIZE)
-                if not data:
-                    break
-                    
-                try:
-                    # Try to parse as JSON (might be the final hash message)
-                    final_message = json.loads(data.decode())
-                    if final_message.get('type') == 'file_transfer_complete':
-                        # Verify file hash
-                        if final_message.get('file_hash') == file_hash.hexdigest():
-                            print("\nFile transfer complete. Hash verified.")
-                        else:
-                            print("\nFile transfer complete but hash verification failed!")
-                        break
-                    continue
-                except json.JSONDecodeError:
-                    pass
-                
-                # Decrypt the chunk
-                try:
-                    decrypted_data = decrypt_message(data.decode(), current_user['private_key'])
-                    chunk = bytes.fromhex(decrypted_data)
-                except Exception as e:
-                    print(f"Error decrypting chunk: {e}")
-                    continue
-                
-                f.write(chunk)
-                file_hash.update(chunk)
-                bytes_received += len(chunk)
-                
-                # Print progress
-                percent = (bytes_received / file_size) * 100
-                print(f"Progress: {percent:.1f}%", end='\r')
-        
+
+        sock.send(json.dumps(metadata).encode())
+        response = sock.recv(BUFFER_SIZE).decode().strip().lower()
+        if response != 'accept':
+            print("Contact has declined the transfer request.")
+            return
+
+        print("Contact has accepted the transfer request.")
+        sock.sendall(encrypted_data)
+        print("File has been successfully transferred.")
+        sequence_number += 1
     except Exception as e:
-        print(f"Error handling file transfer: {e}")
+        print(f"Error sending file: {e}")
     finally:
-        client_socket.close()
+        sock.close()
 
 if __name__ == "__main__":
     users_file = Path('users.json')
@@ -833,12 +706,16 @@ if __name__ == "__main__":
             elif command == 'help':
                 print_help()
             elif command.startswith('send'):
-                parts = command.split()
-                if len(parts) != 3:
-                    print("Usage: send <email> <file_path>")
-                else:
-                    _, email, file_path = parts
-                    send_file(email, file_path)
+                try:
+                    parts = command.split()
+                    if len(parts) != 3:
+                        print("Usage: send <email> <filepath>")
+                        continue
+                    email = parts[1]
+                    path = parts[2]
+                    send_file_to_contact(email, path, current_user, contacts_file)
+                except Exception as e:
+                    print(f"Error: {e}")
             else:
                 print(f"Unknown command: {command}")
                 print("Type 'help' for a list of commands.")
