@@ -385,12 +385,21 @@ def handle_mutual_check(client_socket, contacts_file):
             iv = base64.b64decode(message['iv'])
             checksum = message.get('checksum')
             incoming_seq = message.get('sequence_number')
-
-            print(f"\nContact '{sender}' is sending a file. Accept (y/n)?")
-            choice = input(">>> ").strip().lower()
-            if choice != 'y':
+            
+            print(f"\nContact '{message['sender']}' is sending file: {message['filename']}")
+            print(f"File size: {message['filesize']} bytes")
+            
+            # Create a separate input prompt that bypasses the main command loop
+            while True:
+                choice = input("Accept transfer? (y/n): ").strip().lower()
+                if choice in ['y', 'n']:
+                    break
+                print("Please enter 'y' or 'n'")
+            
+            if choice == 'n':
                 client_socket.send(b'deny')
                 return
+                       
             client_socket.send(b'accept')
 
             # Receive encrypted data
@@ -412,14 +421,9 @@ def handle_mutual_check(client_socket, contacts_file):
                 print("File integrity check failed.")
                 return
 
-            # Save to desired directory
-            print(f"Enter directory to save '{filename}':")
-            directory = input(">>> ").strip()
-            if not os.path.isdir(directory):
-                print("Invalid directory.")
-                return
+            script_directory = os.path.dirname(os.path.abspath(__file__))
+            save_path = os.path.join(script_directory, filename)
 
-            save_path = os.path.join(directory, filename)
             with open(save_path, 'wb') as f:
                 f.write(decrypted_data)
 
@@ -627,7 +631,7 @@ def send_file_to_contact(recipient_email, file_path, current_user, contacts_file
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
+        sock.settimeout(30)
         sock.connect((contact['ip_address'], PORT))
 
         metadata = {
