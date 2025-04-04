@@ -10,6 +10,7 @@ import os
 import base64
 import hashlib
 import random
+import re
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -118,14 +119,42 @@ def authenticate(password, stored_hash):
     return crypt.crypt(password, stored_hash) == stored_hash
 
 def make_user(choice):
+    # Password must be minimum length of 10 characters; mix of uppercase, lowercase, numbers, special characters
+    def valid_password(password):
+        if len(password) < 10:
+            print("Password must be at least 10 characters long.")
+            return False
+        if not re.search(r'[A-Z]', password):
+            print("Password must include at least one uppercase letter.")
+            return False
+        if not re.search(r'[a-z]', password):
+            print("Password must include at least one lowercase letter.")
+            return False
+        if not re.search(r'\d', password):
+            print("Password must include at least one number.")
+            return False
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+            print("Password must include at least one special character.")
+            return False
+        return True
+    
     full_name = input("Enter Full Name: ").strip()
     email = input("Enter Email Address: ").strip()
-    password = getpass.getpass("Enter Password: ")
-    confirm_password = getpass.getpass("Re-enter Password: ")
     
-    if password != confirm_password:
-        print("Passwords do not match. Exiting.")
-        sys.exit(1)
+    # Set up password. Error check to meet requirements, and confirmation matches password
+    while True:
+        password = getpass.getpass("Enter Password: ")
+        confirm_password = getpass.getpass("Re-enter Password: ")
+        
+        if password != confirm_password:
+            print("Passwords do not match. Try again.\n")
+            continue
+        
+        if not valid_password(password):
+            print("Please try again.\n")
+            continue
+        
+        break
     
     print("Passwords Match.")
     private_key, public_key = generate_key_pair()
@@ -138,6 +167,7 @@ def make_user(choice):
         'private_key': private_key
     }
     
+    # Append to users.json
     users.append(user_data)
     with open(users_file, 'w') as f:
         json.dump(users, f, indent=4)
@@ -397,28 +427,39 @@ def handle_mutual_check(client_socket, contacts_file):
                         json.dump(contacts, f, indent=4)
         # Request for file transfer
         elif message.get('type') == 'file_transfer_request':
+            contact_name = next(
+                (c['full_name'] for c in json.load(open(contacts_file)) if c['email'] == message['sender']),
+                message['sender']
+            )
+            
             # Separate input prompt for receiver's terminal
-            print(f"\nContact '{message['sender']}' is sending file: {message['filename']}")
+            print(f"\nContact '{contact_name} <{message['sender']}>' is sending file: {message['filename']}")
+            print(f"(Hit Enter)")
             while True:
                 choice = input("Accept transfer? (y/n): ").strip().lower()
                 if choice in ['y', 'n']:
                     break
                 # Error check loop if not y/n input
-                print("Please enter 'y' or 'n'")
+                print("Please enter 'y' or 'n'", flush=True)
             
             # Receiver denies (return) or accepts (continue)
             if choice == 'n':
                 client_socket.send(b'deny')
                 return       
             client_socket.send(b'accept')
-
+            
             # Receive encrypted data through transferring in chunks for large files
             received_data = b''
-            while len(received_data) < int(message['filesize']):
-                chunk = client_socket.recv(min(BUFFER_SIZE, int(message['filesize']) - len(received_data)))
-                if not chunk:
-                    break
-                received_data += chunk
+            try:
+                while len(received_data) < int(message['filesize']):
+                    chunk = client_socket.recv(min(BUFFER_SIZE, int(message['filesize']) - len(received_data)))
+                    if not chunk:
+                        raise ConnectionError("Connection dropped during transfer")
+                    received_data += chunk
+            # Error check if failed to transfer full file
+            except (socket.timeout, ConnectionError) as e:
+                print(f"\nTransfer interrupted: {e}")
+                return
 
             # Decrypt data using AES, unique initialization vector
             aes_key = derive_key(shared_secret)
@@ -435,9 +476,13 @@ def handle_mutual_check(client_socket, contacts_file):
             script_directory = os.path.dirname(os.path.abspath(__file__))
             save_path = os.path.join(script_directory, message['filename'])
             # After full verification of transfer, output success
-            with open(save_path, 'wb') as f:
-                f.write(decrypted_data)
-            print(f"File saved to {save_path}")
+            try:
+                with open(save_path, 'wb') as f:
+                    f.write(decrypted_data)
+                print(f"File saved to {save_path}")
+            # Error check if failed to save
+            except Exception as e:
+                print(f"Error saving file: {e}")
     except Exception:
         pass
     finally:
@@ -721,6 +766,8 @@ if __name__ == "__main__":
                     send_file_to_contact(email, path, current_user, contacts_file)
                 except Exception as e:
                     print(f"Error: {e}")
+            elif command == "":
+                continue
             else:
                 print(f"Unknown command: {command}")
                 print("Type 'help' for a list of commands.")
