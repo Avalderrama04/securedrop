@@ -15,12 +15,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-# Network configuration
-PORT = 5555
-BROADCAST_PORT = 5556
-BUFFER_SIZE = 1024
-BROADCAST_INTERVAL = 10  # seconds
-ONLINE_TIMEOUT = 30      # seconds - how long before considering a contact offline
+# Network configuration constants
+PORT = 5555                # Main TCP port for secure communications
+BROADCAST_PORT = 5556      # UDP port for presence broadcasting
+BUFFER_SIZE = 1024        # Standard chunk size for network operations
+BROADCAST_INTERVAL = 10    # Frequency of presence announcements (seconds)
+ONLINE_TIMEOUT = 30       # Time before marking contact as offline (seconds)
 
 # Global variables
 running = True
@@ -568,34 +568,68 @@ def start_contact_monitor(contacts_file):
     t.start()
 
 def list_contacts(contacts_file):
-    """List all contacts with their status"""
+    """List all contacts with their status and verify mutual connections"""
     if not contacts_file.exists():
         print("No contacts found.")
         return
     try:
+        # Load contacts from file
         with open(contacts_file, 'r') as f:
             contacts = json.load(f)
         if not contacts:
             print("No contacts found.")
             return
+
         current_time = time.time()
         updated = False
+        
+        # First pass: Update online status and force verify mutual connections
+        for i, contact in enumerate(contacts):
+            # Update online status
+            if contact.get('last_seen'):
+                is_online = (current_time - contact['last_seen'] < ONLINE_TIMEOUT)
+                if contact.get('online', False) != is_online:
+                    contact['online'] = is_online
+                    updated = True
+            
+            # Force verify mutual status for all contacts
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5)  # Short timeout for quick verification
+                if contact.get('ip_address'):
+                    try:
+                        sock.connect((contact.get('ip_address'), PORT))
+                        # Send verification request
+                        message = {
+                            'type': 'mutual_check',
+                            'email': current_user['email']
+                        }
+                        sock.send(json.dumps(message).encode())
+                        # Wait for response
+                        response = sock.recv(BUFFER_SIZE)
+                        if response:
+                            response_data = json.loads(response.decode())
+                            if response_data.get('status') == 'verified':
+                                contact['mutual'] = True
+                                updated = True
+                    except (socket.timeout, ConnectionRefusedError):
+                        contact['mutual'] = False
+                        updated = True
+            finally:
+                sock.close()
+        
+        # Display contacts
         print("\nAll Contacts:")
         print("-------------")
         print(f"{'Name':<20} {'Email':<30} {'Status':<10} {'Mutual':<8}")
         print("-" * 70)
-        for i, contact in enumerate(contacts):
-            if contact.get('last_seen') and (current_time - contact['last_seen'] < ONLINE_TIMEOUT):
-                if not contact.get('online', False):
-                    contact['online'] = True
-                    updated = True
-            else:
-                if contact.get('online', False):
-                    contact['online'] = False
-                    updated = True
+        
+        for contact in contacts:
             status = "Online" if contact.get('online', False) else "Offline"
             mutual = "Yes" if contact.get('mutual', False) else "No"
             print(f"{contact['full_name']:<20} {contact['email']:<30} {status:<10} {mutual:<8}")
+        
+        # Display available transfer contacts
         online_mutual = [c for c in contacts if c.get('online', False) and c.get('mutual', False)]
         if online_mutual:
             print("\nOnline Mutual Contacts (available for file transfer):")
@@ -604,9 +638,12 @@ def list_contacts(contacts_file):
                 print(f"{i}. {contact['full_name']} ({contact['email']})")
         else:
             print("\nNo contacts are both online and mutual (required for file transfer).")
+        
+        # Save updates if needed
         if updated:
             with open(contacts_file, 'w') as f:
                 json.dump(contacts, f, indent=4)
+                
     except Exception as e:
         print(f"Error listing contacts: {e}")
 
@@ -616,7 +653,6 @@ def print_help():
     print("------------------")
     print("  add    -> Add a new contact")
     print("  list   -> List all contacts and statuses")
-    print("  verify -> Force mutual verification for all contacts")
     print("  send   -> Transfer file to contact (usage: send <email> <file_path>)")
     print("  help   -> Show these commands")
     print("  exit   -> Exit SecureDrop\n")
@@ -665,7 +701,7 @@ def send_file_to_contact(recipient_email, file_path, current_user, contacts_file
     aes_key = derive_key(shared_secret) # shared secret key
     iv = os.urandom(16) # unique iv for a transfer
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv))
-    encryptor = cipher.encryptor()
+    encryptor = encryptor = cipher.encryptor()
     encrypted_data = encryptor.update(file_data) + encryptor.finalize()
 
     try:
@@ -679,10 +715,10 @@ def send_file_to_contact(recipient_email, file_path, current_user, contacts_file
             'type': 'file_transfer_request',
             'filename': os.path.basename(file_path),
             'filesize': len(encrypted_data),
-            'iv': base64.b64encode(iv).decode(), # Decryption
+            'iv': base64.b64encode(iv).decode(),         # Initialization Vector for AES
             'sender': current_user['email'],
-            'checksum': checksum, # Integrity verification
-            'sequence_number': sequence_number # Prevent replay attacks
+            'checksum': checksum,                        # SHA-256 hash for integrity
+            'sequence_number': sequence_number           # Anti-replay protection
         }
         sock.send(json.dumps(metadata).encode())
         # Recipient handling occurs in handle_mutual_check
@@ -750,14 +786,11 @@ if __name__ == "__main__":
                 make_contact(contacts_file)
             elif command == 'list':
                 list_contacts(contacts_file)
-            elif command == 'verify':
-                force_mutual_check(contacts_file)
             elif command == 'help':
                 print_help()
             elif command.startswith('send'):
                 try:
                     parts = command.split()
-                    # Error check for proper send format
                     if len(parts) != 3:
                         print("Usage: send <recipientemail> <filepath>")
                         continue
