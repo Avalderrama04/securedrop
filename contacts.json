@@ -3,8 +3,8 @@
         "full_name": "John Smith",
         "email": "jsmith@gmail.com",
         "mutual": true,
-        "online": true,
+        "online": false,
         "ip_address": "10.8.0.63",
-        "last_seen": 1742753891.847646
+        "last_seen": 1744423563.316376
     }
 ]
