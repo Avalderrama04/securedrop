@@ -11,24 +11,30 @@ SecureDrop is a secure peer-to-peer file transfer application that enables users
 ## Milestones
 
 ### Milestone 1: User Registration
-**Assigned to: *
+Arthea Valderrama
+
 - Secure user account creation
 - Password requirements enforcement
 - RSA key pair generation
 - Secure storage of user credentials
 
 ### Milestone 2: User Login
+Arthea Valderrama
+
 - Secure authentication system
 - Password validation
 - Session management
 - Protection against unauthorized access
 
 ### Milestone 3: Adding Contacts
+Arthea Valderrama
+
 - Contact management system
 - Contact information storage
 - Secure contact verification process
 
 ### Milestone 4: Listing Contacts
+Ayoub Darkaoui
 
 Implementation of contact listing functionality including:
 - Real-time contact status display
@@ -48,11 +54,22 @@ Features:
 - Secure verification process
 
 ### Milestone 5: Secure File Transfer
-- End-to-end encryption
-- File integrity verification
+McKenna Blake
+
+- End-to-end encryption. Confidentiality: AES symmetric encryption in CFB mode
+- File integrity verification. SHA-256 hash function
 - Progress tracking
 - Transfer authorization
 - Secure key exchange
+- Replay Attack Mitigation: sequence numbers with random seed
+
+Features:
+- Secure transfer of files between users. Guarantees files are identical
+- Ensure the file exists. Ensure the recipient is mutual, online, and has a valid IP
+- Allow recipient to deny file transfer
+- Transfer large files in chunks, and detect if connection drops or if file is corrupted
+- Ensure file is saved to recipient before success
+- Timeout detection
 
 ## Technical Requirements
 - Python 3.6+
