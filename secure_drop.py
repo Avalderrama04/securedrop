@@ -115,14 +115,17 @@ def decrypt_message(encrypted_data, private_key_str):
     decrypted_message = decryptor.update(encrypted_message) + decryptor.finalize()
     return decrypted_message.decode()
 
+#Function to provide salting towards hashed passwords
 def secure_password(password):
     return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
 
+#If the stored hash of the password matches the userinput, authenticate user
 def authenticate(password, stored_hash):
     return crypt.crypt(password, stored_hash) == stored_hash
 
+#Function to create a user if one not registered
 def make_user(choice):
-    # Password must be minimum length of 10 characters; mix of uppercase, lowercase, numbers, special characters
+    #Password must be minimum length of 10 characters; mix of uppercase, lowercase, numbers, special characters
     def valid_password(password):
         if len(password) < 10:
             print("Password must be at least 10 characters long.")
@@ -144,7 +147,7 @@ def make_user(choice):
     full_name = input("Enter Full Name: ").strip()
     email = input("Enter Email Address: ").strip()
     
-    # Set up password. Error check to meet requirements, and confirmation matches password
+    #Set up password. Error check to meet requirements, and confirmation matches password
     while True:
         password = getpass.getpass("Enter Password: ")
         confirm_password = getpass.getpass("Re-enter Password: ")
@@ -170,13 +173,15 @@ def make_user(choice):
         'private_key': private_key
     }
     
-    # Append to users.json
+    #Append registered user to users.json
     users.append(user_data)
     with open(users_file, 'w') as f:
         json.dump(users, f, indent=4)
     
     print("User Registered.")
 
+
+#Function to ensure that email address and password match to login
 def login(users_file):
     while True: 
         email = input("Enter Email Address: ").strip()
@@ -750,6 +755,7 @@ if __name__ == "__main__":
     
     local_ip = get_local_ip()
     
+    #If no users registered with client, prompt to register a new user
     if users_file.exists():
         with open(users_file, 'r') as f:
             users = json.load(f)
@@ -777,7 +783,7 @@ if __name__ == "__main__":
     start_contact_monitor(contacts_file)
     
     print("Type \"help\" for commands.")
-    
+    #Handle user commands in securedrop with exceptions
     try:
         while True:
             command = input("\nSecureDrop> ").strip().lower()
