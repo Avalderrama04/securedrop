@@ -239,11 +239,13 @@ def make_contact(contacts_file):
         json.dump(contacts, f, indent=4)
     
     print(f"Contact {full_name} added successfully.")
-
+    
+# Function to start the UDP broadcast service
 def start_broadcast_service():
     """Start the UDP broadcast service to announce presence on the network"""
     global current_user, local_ip, running
     def broadcast_thread():
+        #Broadcast socket setup
         broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -257,6 +259,7 @@ def start_broadcast_service():
             while running:
                 try:
                     message = {
+                        #storing user data to the contacts.json file
                         'type': 'announce',
                         'email': current_user['email'],
                         'timestamp': time.time(),
@@ -280,7 +283,7 @@ def start_broadcast_service():
             broadcast_socket.close()
     t = threading.Thread(target=broadcast_thread, daemon=True)
     t.start()
-
+# Function to attempt direct announcements to known contacts
 def attempt_direct_announcements():
     """Try to directly announce presence to known contacts"""
     global contacts_file
@@ -294,7 +297,7 @@ def attempt_direct_announcements():
                 direct_announce_to_contact(contact)
     except Exception:
         pass
-
+# Function to send a direct announcement to a specific contact
 def direct_announce_to_contact(contact):
     """Send a direct announcement to a specific contact"""
     global current_user, local_ip
@@ -320,7 +323,8 @@ def direct_announce_to_contact(contact):
         return True
     except Exception:
         return False
-
+# Function to start the UDP listener service
+# to listen for broadcasts from other users
 def start_listener_service(contacts_file):
     """Listen for broadcasts from other users on the network"""
     global running
@@ -353,7 +357,7 @@ def start_listener_service(contacts_file):
         listener_socket.close()
     t = threading.Thread(target=listener_thread, daemon=True)
     t.start()
-
+# Function to start the TCP mutual check service
 def start_mutual_check_service(contacts_file):
     """Handle TCP connections for mutual contact verification"""
     global current_user, running
@@ -383,6 +387,7 @@ def start_mutual_check_service(contacts_file):
     t = threading.Thread(target=server_thread, daemon=True)
     t.start()
 
+# Function to handle mutual contact verification and file transfer requests
 def handle_mutual_check(client_socket, contacts_file):
     """Handle mutual contact verification request and direct announcements and file transfer request"""
     global current_user, local_ip
@@ -496,6 +501,7 @@ def handle_mutual_check(client_socket, contacts_file):
     finally:
         client_socket.close()
 
+# Function to update contact status based on received messages
 def update_contact_status(contacts_file, message):
     """Update a contact's online status and IP address"""
     if not contacts_file.exists():
@@ -519,6 +525,7 @@ def update_contact_status(contacts_file, message):
     except Exception:
         pass
 
+# Function to verify if a contact has also added us
 def verify_mutual_status(contact, contact_index, contacts):
     """Check if a contact has also added us"""
     global current_user
@@ -548,6 +555,7 @@ def verify_mutual_status(contact, contact_index, contacts):
         pass
     return False
 
+# Function to periodically monitor and check contacts' status
 def start_contact_monitor(contacts_file):
     """Periodically check contacts' status"""
     global running
@@ -575,6 +583,7 @@ def start_contact_monitor(contacts_file):
     t = threading.Thread(target=monitor_thread, daemon=True)
     t.start()
 
+# Function to list all contacts and their status
 def list_contacts(contacts_file):
     """List all contacts with their status and verify mutual connections"""
     if not contacts_file.exists():
@@ -626,7 +635,7 @@ def list_contacts(contacts_file):
             finally:
                 sock.close()
         
-        # Display contacts
+        # Display all contacts and their statuses
         print("\nAll Contacts:")
         print("-------------")
         print(f"{'Name':<20} {'Email':<30} {'Status':<10} {'Mutual':<8}")
@@ -637,7 +646,7 @@ def list_contacts(contacts_file):
             mutual = "Yes" if contact.get('mutual', False) else "No"
             print(f"{contact['full_name']:<20} {contact['email']:<30} {status:<10} {mutual:<8}")
         
-        # Display available transfer contacts
+        # Display only available for transfer contacts
         online_mutual = [c for c in contacts if c.get('online', False) and c.get('mutual', False)]
         if online_mutual:
             print("\nOnline Mutual Contacts (available for file transfer):")
@@ -654,7 +663,7 @@ def list_contacts(contacts_file):
                 
     except Exception as e:
         print(f"Error listing contacts: {e}")
-
+# Function to display available commands in help function
 def print_help():
     """Display available commands"""
     print("\nAvailable Commands:")
@@ -664,27 +673,6 @@ def print_help():
     print("  send   -> Transfer file to contact (usage: send <email> <file_path>)")
     print("  help   -> Show these commands")
     print("  exit   -> Exit SecureDrop\n")
-
-def force_mutual_check(contacts_file):
-    """Force a mutual check for all contacts"""
-    if not contacts_file.exists():
-        print("No contacts found.")
-        return
-    try:
-        with open(contacts_file, 'r') as f:
-            contacts = json.load(f)
-        if not contacts:
-            print("No contacts found.")
-            return
-        print("Checking mutual status for all contacts...")
-        for i, contact in enumerate(contacts):
-            if verify_mutual_status(contact, i, contacts):
-                print(f"✓ Mutual verification successful for {contact['full_name']}")
-        with open(contacts_file, 'w') as f:
-            json.dump(contacts, f, indent=4)
-        print("Mutual verification completed.")
-    except Exception as e:
-        print(f"Error checking mutual status: {e}")
 
 def send_file_to_contact(recipient_email, file_path, current_user, contacts_file):
     """Milestone 5: transfers a file securely to a contact"""
@@ -783,6 +771,7 @@ if __name__ == "__main__":
     start_contact_monitor(contacts_file)
     
     print("Type \"help\" for commands.")
+
     #Handle user commands in securedrop with exceptions
     try:
         while True:
